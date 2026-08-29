@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 # === ページ設定 ===
-st.set_page_config(page_title="Family Wealth Compass", page_icon="💲", layout="wide")
+st.set_page_config(page_title="Family Wealth Compass", page_icon="🧭", layout="wide")
 
 # ==========================================
 # 🔒 パスワード認証機能
@@ -31,6 +31,10 @@ if not check_password():
 # --- 定数・固定データ ---
 ORIGINAL_GOAL_AGE = "47歳"
 
+# ★【新規追加】マイナス乖離の許容範囲（単位：万円）★
+# 例：50に設定すると、予定より50万円マイナスまでは「許容内（セーフ）」と判定します
+TOLERANCE_MAN = 50 
+
 future_data = {
     40: {'income': 1006, 'extra': 0},
     41: {'income': 1014, 'extra': 0},
@@ -47,18 +51,16 @@ future_data = {
     52: {'income': 1050, 'extra': -38}
 }
 
-# --- セッションステート初期化（詳細項目の追加） ---
+# --- セッションステート初期化 ---
 if "actual_cash" not in st.session_state: st.session_state.actual_cash = 1880
 if "actual_nisa" not in st.session_state: st.session_state.actual_nisa = 370
 
-# 収入詳細（万円）
 if "inc_husband_m" not in st.session_state: st.session_state.inc_husband_m = 43.0
 if "inc_husband_b" not in st.session_state: st.session_state.inc_husband_b = 130.0
 if "inc_wife_m" not in st.session_state: st.session_state.inc_wife_m = 16.0
 if "inc_wife_b" not in st.session_state: st.session_state.inc_wife_b = 60.0
 if "income_diff" not in st.session_state: st.session_state.income_diff = 0.0
 
-# 支出詳細（月額・万円）
 if "exp_food" not in st.session_state: st.session_state.exp_food = 14.8
 if "exp_util" not in st.session_state: st.session_state.exp_util = 1.5
 if "exp_tele" not in st.session_state: st.session_state.exp_tele = 1.1
@@ -77,13 +79,12 @@ def run_simulation(base_cash, base_nisa, living, invest, inc_diff):
     sim_cash = base_cash
     sim_nisa = base_nisa
     current_living = living
-    loan_annual = 183 # 住宅ローン年間返済額
+    loan_annual = 183 
     
     is_goal_reached = False
     goal_age = "未達成(50歳以降)"
     records = []
     
-    # 39歳（現在）の記録
     total = int(sim_cash + sim_nisa)
     if total >= 4000:
         goal_age = "39歳"
@@ -97,12 +98,11 @@ def run_simulation(base_cash, base_nisa, living, invest, inc_diff):
         "総資産(万)": total
     })
     
-    # 40歳〜52歳の計算
     for age in range(40, 53):
         data = future_data[age]
-        current_living = current_living * 1.02 # 生活費2%インフレ
+        current_living = current_living * 1.02 
         total_expense = current_living + loan_annual + data['extra']
-        current_income = data['income'] + inc_diff # 編集された収入差額を反映
+        current_income = data['income'] + inc_diff 
         
         sim_cash = sim_cash + current_income - total_expense - invest
         sim_nisa = (sim_nisa * 1.05) + invest
@@ -172,11 +172,19 @@ with tab1:
     if st.session_state.analyzed:
         diff_total = (st.session_state.actual_cash + st.session_state.actual_nisa) - 2250
         st.markdown("---")
-        if diff_total >= 0:
-            st.success(f"**乖離： ＋{diff_total} 万円**\n\n完璧なペースです！生活レベルを維持して進んでください。")
+        
+        # ★【変更】許容範囲の判定ロジック★
+        if diff_total >= -TOLERANCE_MAN:
+            # 乖離がプラス、またはマイナスでも許容範囲内（-50万以内）の場合
+            if diff_total >= 0:
+                st.success(f"**乖離： ＋{diff_total} 万円**\n\n完璧なペースです！生活レベルを維持して進んでください。")
+            else:
+                # 許容範囲内のマイナスの場合のメッセージ
+                st.success(f"**乖離： {diff_total} 万円**\n\nマイナスですが【許容範囲内（±{TOLERANCE_MAN}万円）】です！誤差の範囲ですので、焦らず今のペースを維持しましょう。")
         else:
+            # 許容範囲を超えてマイナスになった場合のみ、警告とFPアドバイスを表示
             st.error(f"**乖離： {diff_total} 万円**")
-            st.markdown("⚠️ 予定を下回っています。シミュレーションが修正されました。")
+            st.markdown(f"⚠️ 許容範囲（-{TOLERANCE_MAN}万円）を下回りました。シミュレーションが修正されました。")
             
             with st.expander("💡 詳細な改善策：FPのアドバイスを見る", expanded=True):
                 st.markdown("#### 👩‍💼 FPからの項目別・詳細改善提案")
@@ -191,9 +199,7 @@ with tab1:
 with tab2:
     st.markdown("### 📊 ロードマップと詳細設定")
     
-    # 現在の世帯収入（設定値）を計算
     current_inc = (st.session_state.inc_husband_m * 12 + st.session_state.inc_husband_b) + (st.session_state.inc_wife_m * 12 + st.session_state.inc_wife_b)
-    
     st.info(f"💡 現在のベース設定：世帯年収 **{int(current_inc)}万円** ／ 基本生活費 **{int(st.session_state.living_cost)}万円**(年) ／ NISA積立 **{int(st.session_state.invest_amount)}万円**(年)")
     
     with st.expander("📝 収入・支出の項目を細かく編集する", expanded=False):
@@ -223,7 +229,6 @@ with tab2:
         new_invest = st.number_input("NISA年間積立額", value=float(st.session_state.invest_amount), step=5.0)
 
         if st.button("この設定でシミュレーションを再計算する", use_container_width=True):
-            # セッションステートの更新
             st.session_state.inc_husband_m = new_inc_h_m
             st.session_state.inc_husband_b = new_inc_h_b
             st.session_state.inc_wife_m = new_inc_w_m
@@ -239,11 +244,9 @@ with tab2:
             st.session_state.exp_free = new_exp_free
             st.session_state.invest_amount = new_invest
             
-            # 変更された収入の差額を計算（初期基準898万との差）
             new_total_inc = (new_inc_h_m * 12 + new_inc_h_b) + (new_inc_w_m * 12 + new_inc_w_b)
             st.session_state.income_diff = new_total_inc - 898
             
-            # 変更された支出から新しい基本生活費(年間)を計算
             monthly_exp = new_exp_food + new_exp_util + new_exp_tele + new_exp_car + new_exp_edu + new_exp_ins + new_exp_wife + new_exp_free
             st.session_state.living_cost = monthly_exp * 12
             

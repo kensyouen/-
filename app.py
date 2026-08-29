@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 # === ページ設定 ===
-st.set_page_config(page_title="Family Wealth Compass", page_icon="🧭", layout="wide")
+st.set_page_config(page_title="Family Wealth Compass", page_icon="💲", layout="wide")
 
 # ==========================================
 # 🔒 パスワード認証機能

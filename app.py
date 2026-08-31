@@ -279,7 +279,7 @@ with tab1:
         st.session_state.actual_cash = new_cash
         st.session_state.actual_nisa = new_nisa
         trigger_save() # スプレッドシートに保存
-        st.rerun()
+        #st.rerun()
 
     # --- FPアドバイスエリア ---
     diff_total = (st.session_state.actual_cash + st.session_state.actual_nisa) - 2250
@@ -340,7 +340,7 @@ with tab2:
             st.session_state.exp_free = new_exp_free
             st.session_state.invest_amount = new_invest
             trigger_save() # スプレッドシートに保存
-            st.rerun()
+            #st.rerun()
 
     st.divider()
     st.markdown("#### 📋 11年間ロードマップ（データ一覧）")

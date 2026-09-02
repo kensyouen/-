@@ -3,44 +3,24 @@ import pandas as pd
 import json
 import gspread
 from google.oauth2.service_account import Credentials
+import google.generativeai as genai
+import feedparser
+import urllib.parse
 
-# === ページ設定（スマホライクなCenteredレイアウトに変更） ===
+# === ページ設定 ===
 st.set_page_config(page_title="FW Compass", page_icon="🧭", layout="centered")
 
 # ==========================================
-# 🎨 カスタムCSS（iPhoneアプリ風のスタイリッシュなUI）
+# 🎨 カスタムCSS（iPhoneアプリ風デザイン）
 # ==========================================
 st.markdown("""
 <style>
-    /* iOS風の背景色とフォント */
-    .stApp {
-        background-color: #F2F2F7;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    }
-    /* iOS風の白カードデザイン */
-    .ios-card {
-        background-color: #FFFFFF;
-        border-radius: 16px;
-        padding: 20px;
-        margin-bottom: 20px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.04);
-    }
-    /* メトリック（数値）部分のテキストスタイル */
+    .stApp { background-color: #F2F2F7; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    .ios-card { background-color: #FFFFFF; border-radius: 16px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.04); }
     .metric-label { font-size: 13px; color: #8E8E93; margin-bottom: 4px; font-weight: 600; }
     .metric-value { font-size: 24px; font-weight: 700; margin-bottom: 4px; }
     .sub-metric { font-size: 12px; color: #8E8E93; line-height: 1.5; }
-    /* バッジ（達成年齢表示） */
-    .goal-badge {
-        background-color: #FFF4E5;
-        color: #FF9500;
-        padding: 6px 16px;
-        border-radius: 20px;
-        font-size: 13px;
-        font-weight: 700;
-        display: inline-block;
-        margin-bottom: 16px;
-    }
-    /* ボタンの角丸 */
+    .goal-badge { background-color: #FFF4E5; color: #FF9500; padding: 6px 16px; border-radius: 20px; font-size: 13px; font-weight: 700; display: inline-block; margin-bottom: 16px; }
     .stButton>button { border-radius: 12px !important; font-weight: 600 !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -70,7 +50,58 @@ if not check_password():
 
 
 # ==========================================
-# 💾 データベース（スプレッドシート）連携機能
+# 🤖 Gemini AI & ニュース取得機能（政策＆家計連動）
+# ==========================================
+try:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+except Exception as e:
+    st.warning("⚠️ Gemini APIキーが設定されていません。AI機能を使う場合はSecretsに `GEMINI_API_KEY` を登録してください。")
+
+@st.cache_data(ttl=3600)
+def get_latest_economic_news():
+    """Google Newsから家計・政策・経済に関連する最新ニュースを取得"""
+    # 検索キーワードを政策や家計に直結するものに強化
+    query = "日本経済 OR 円安 OR 増税 OR 減税 OR 給付金 OR 子育て支援 OR 教育無償化 OR 関税"
+    encoded_query = urllib.parse.quote(query)
+    url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ja&gl=JP&ceid=JP:ja"
+    
+    feed = feedparser.parse(url)
+    # 関連性の高い最新7件を抽出
+    news_titles = [entry.title for entry in feed.entries[:7]]
+    return "\n".join(news_titles)
+
+def generate_ai_fp_advice(actual_cash, actual_nisa, diff_total, inc_total, expenses):
+    news_text = get_latest_economic_news()
+    
+    prompt = f"""
+    あなたはトップクラスの専属ファイナンシャルプランナーです。
+    以下の「クライアントの家計データ」と「最新の経済・政策ニュース」を掛け合わせ、生活防衛と資産形成の最適解をマークダウン形式で提案してください。
+
+    【クライアントの家計データ】
+    - 現在の現金: {actual_cash}万円
+    - 現在のNISA: {actual_nisa}万円
+    - 予定総資産との乖離: {diff_total}万円
+    - 世帯年収: {inc_total}万円
+    - 月間支出: 食費 {expenses['food']}万, 光熱費 {expenses['util']}万, 通信費 {expenses['tele']}万, 車 {expenses['car']}万, 教育 {expenses['edu']}万, 妻小遣い {expenses['wife']}万, バッファ(使途不明) {expenses['free']}万
+    - NISA年間積立額: {expenses['invest']}万円
+
+    【最新の経済・政策ニュース】
+    {news_text}
+
+    【出力構成（必ず以下の4点を含める）】
+    1. 📰 **政策・経済トレンドと家計への影響**：ニュースにある税制、給付金、為替、教育支援などのトレンドが、このご家庭の生活費や教育費にどう影響するか具体的に解説してください。
+    2. 🛡️ **生活防衛と投資戦略**：インフレや政策を踏まえ、現金の守り方とNISA増額などの攻め方を提案してください。
+    3. 👏 **家計の強みと弱点の分析**：優秀な支出項目（光熱費や通信費など）を褒めつつ、弱点（食費など）に対する具体的な改善策を提案してください（バッファ枠の活用も含む）。
+    4. 🔥 **総括エール**：最後にクライアントを励ます言葉を添えてください。
+    """
+    
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    response = model.generate_content(prompt)
+    return response.text
+
+
+# ==========================================
+# 💾 スプレッドシート連携機能
 # ==========================================
 @st.cache_resource
 def get_gsheet_client():
@@ -105,22 +136,15 @@ def save_data(data_dict):
 # 📊 シミュレーション設定・初期化
 # ==========================================
 ORIGINAL_GOAL_AGE = "47歳"
+TOLERANCE_MAN = 50 
 
-# 40歳〜52歳の特別支出データ（100万以上はFPアドバイスで自動警告されます）
 future_data = {
-    40: {'income': 1006, 'extra': 0},
-    41: {'income': 1014, 'extra': 0},
-    42: {'income': 1022, 'extra': 0},
-    43: {'income': 1030, 'extra': 0},
-    44: {'income': 1038, 'extra': 200}, # 修繕150万 + 高校準備50万
-    45: {'income': 1056, 'extra': 8},   
-    46: {'income': 1065, 'extra': 8},
-    47: {'income': 1074, 'extra': 8},
-    48: {'income': 1046, 'extra': 128}, # 専門学校等
-    49: {'income': 1056, 'extra': 112}, 
-    50: {'income': 1042, 'extra': -38},
-    51: {'income': 1050, 'extra': -38},
-    52: {'income': 1050, 'extra': -38}
+    40: {'income': 1006, 'extra': 0}, 41: {'income': 1014, 'extra': 0},
+    42: {'income': 1022, 'extra': 0}, 43: {'income': 1030, 'extra': 0},
+    44: {'income': 1038, 'extra': 200}, 45: {'income': 1056, 'extra': 8},   
+    46: {'income': 1065, 'extra': 8}, 47: {'income': 1074, 'extra': 8},
+    48: {'income': 1046, 'extra': 128}, 49: {'income': 1056, 'extra': 112}, 
+    50: {'income': 1042, 'extra': -38}, 51: {'income': 1050, 'extra': -38}, 52: {'income': 1050, 'extra': -38}
 }
 
 if "data_loaded" not in st.session_state:
@@ -144,41 +168,25 @@ if "data_loaded" not in st.session_state:
     else:
         st.session_state.actual_cash = 1880.0
         st.session_state.actual_nisa = 370.0
-        st.session_state.inc_husband_m = 43.0
-        st.session_state.inc_husband_b = 130.0
-        st.session_state.inc_wife_m = 16.0
-        st.session_state.inc_wife_b = 60.0
-        st.session_state.exp_food = 14.8
-        st.session_state.exp_util = 1.5
-        st.session_state.exp_tele = 1.1
-        st.session_state.exp_car = 6.0
-        st.session_state.exp_edu = 5.4
-        st.session_state.exp_ins = 0.7
-        st.session_state.exp_wife = 1.9
-        st.session_state.exp_free = 17.3
+        st.session_state.inc_husband_m, st.session_state.inc_husband_b = 43.0, 130.0
+        st.session_state.inc_wife_m, st.session_state.inc_wife_b = 16.0, 60.0
+        st.session_state.exp_food, st.session_state.exp_util, st.session_state.exp_tele = 14.8, 1.5, 1.1
+        st.session_state.exp_car, st.session_state.exp_edu, st.session_state.exp_ins = 6.0, 5.4, 0.7
+        st.session_state.exp_wife, st.session_state.exp_free = 1.9, 17.3
         st.session_state.invest_amount = 60.0
     st.session_state.data_loaded = True
 
-# --- 保存用の即時コールバック関数（連続更新バグ防止策） ---
 def trigger_save():
-    data_to_save = {
-        "actual_cash": st.session_state.actual_cash,
-        "actual_nisa": st.session_state.actual_nisa,
-        "inc_h_m": st.session_state.inc_husband_m,
-        "inc_h_b": st.session_state.inc_husband_b,
-        "inc_w_m": st.session_state.inc_wife_m,
-        "inc_w_b": st.session_state.inc_wife_b,
-        "exp_food": st.session_state.exp_food,
-        "exp_util": st.session_state.exp_util,
-        "exp_tele": st.session_state.exp_tele,
-        "exp_car": st.session_state.exp_car,
-        "exp_edu": st.session_state.exp_edu,
-        "exp_ins": st.session_state.exp_ins,
-        "exp_wife": st.session_state.exp_wife,
-        "exp_free": st.session_state.exp_free,
+    save_data({
+        "actual_cash": st.session_state.actual_cash, "actual_nisa": st.session_state.actual_nisa,
+        "inc_h_m": st.session_state.inc_husband_m, "inc_h_b": st.session_state.inc_husband_b,
+        "inc_w_m": st.session_state.inc_wife_m, "inc_w_b": st.session_state.inc_wife_b,
+        "exp_food": st.session_state.exp_food, "exp_util": st.session_state.exp_util,
+        "exp_tele": st.session_state.exp_tele, "exp_car": st.session_state.exp_car,
+        "exp_edu": st.session_state.exp_edu, "exp_ins": st.session_state.exp_ins,
+        "exp_wife": st.session_state.exp_wife, "exp_free": st.session_state.exp_free,
         "invest_amount": st.session_state.invest_amount
-    }
-    save_data(data_to_save)
+    })
 
 def save_home_assets():
     st.session_state.actual_cash = st.session_state.input_cash
@@ -201,7 +209,6 @@ def save_plan_settings():
     st.session_state.invest_amount = st.session_state.input_invest
     trigger_save()
 
-# 計算処理
 new_total_inc = (st.session_state.inc_husband_m * 12 + st.session_state.inc_husband_b) + (st.session_state.inc_wife_m * 12 + st.session_state.inc_wife_b)
 income_diff = new_total_inc - 898
 monthly_exp = st.session_state.exp_food + st.session_state.exp_util + st.session_state.exp_tele + st.session_state.exp_car + st.session_state.exp_edu + st.session_state.exp_ins + st.session_state.exp_wife + st.session_state.exp_free
@@ -213,20 +220,14 @@ def run_simulation():
     current_living = living_cost_annual
     invest = st.session_state.invest_amount
     loan_annual = 183 
-    
     is_goal_reached = False
     goal_age = "未達成(50歳以降)"
     records = []
     
     total = int(sim_cash + sim_nisa)
-    if total >= 4000:
-        goal_age = "39歳"
-        is_goal_reached = True
+    if total >= 4000: goal_age = "39歳"; is_goal_reached = True
         
-    records.append({
-        "年齢": "39歳(現)", "家族年齢": "35/10/6/2", "収入(万)": int(898 + income_diff), 
-        "支出(万)": 0, "総資産(万)": total
-    })
+    records.append({"年齢": "39歳(現)", "家族年齢": "35/10/6/2", "収入(万)": int(898 + income_diff), "支出(万)": 0, "総資産(万)": total})
     
     for age in range(40, 53):
         data = future_data[age]
@@ -238,14 +239,9 @@ def run_simulation():
         sim_nisa = (sim_nisa * 1.05) + invest
         total = int(sim_cash + sim_nisa)
         
-        if total >= 4000 and not is_goal_reached:
-            goal_age = f"{age}歳"
-            is_goal_reached = True
+        if total >= 4000 and not is_goal_reached: goal_age = f"{age}歳"; is_goal_reached = True
             
-        records.append({
-            "年齢": f"{age}歳", "家族年齢": f"{age-4}/{age-29}/{age-33}/{age-37}",
-            "収入(万)": int(current_income), "支出(万)": int(total_expense), "総資産(万)": total
-        })
+        records.append({"年齢": f"{age}歳", "家族年齢": f"{age-4}/{age-29}/{age-33}/{age-37}", "収入(万)": int(current_income), "支出(万)": int(total_expense), "総資産(万)": total})
         
     return goal_age, pd.DataFrame(records)
 
@@ -255,21 +251,15 @@ goal_age_result, df_plan = run_simulation()
 # ==========================================
 # 📱 UI描画
 # ==========================================
-st.markdown("<h3 style='text-align:center; color:#1C1C1E; margin-bottom:20px;'>🧭 Family Wealth Compass</h3>", unsafe_allow_html=True)
+st.markdown("<h3 style='text-align:center; color:#1C1C1E; margin-bottom:20px;'>🧭 FW Compass</h3>", unsafe_allow_html=True)
 tab1, tab2 = st.tabs(["📊 ダッシュボード", "⚙️ 詳細設定"])
 
 with tab1:
-    # --- VSカード（iPhone風デザイン＆内訳追加） ---
-    badge_text = f"🎯 当初目標：{ORIGINAL_GOAL_AGE} ➔ 最新予測：{goal_age_result}"
-    if goal_age_result == ORIGINAL_GOAL_AGE:
-        badge_text = f"🎯 当初目標：{ORIGINAL_GOAL_AGE} (予定通り!)"
-        
+    badge_text = f"🎯 当初目標：{ORIGINAL_GOAL_AGE} ➔ 最新予測：{goal_age_result}" if goal_age_result != ORIGINAL_GOAL_AGE else f"🎯 当初目標：{ORIGINAL_GOAL_AGE} (予定通り!)"
     target_cash, target_nisa = 1880, 370
     target_total = target_cash + target_nisa
     actual_total = st.session_state.actual_cash + st.session_state.actual_nisa
-    
-    # 実際の資産が予定より多い場合は青、少ない場合は赤寄りの色にする
-    actual_color = "#007AFF" if actual_total >= target_total else "#FF3B30"
+    actual_color = "#007AFF" if actual_total >= target_total - TOLERANCE_MAN else "#FF3B30"
     
     html_card = f"""
     <div class="ios-card" style="text-align:center;">
@@ -291,54 +281,48 @@ with tab1:
     """
     st.markdown(html_card, unsafe_allow_html=True)
 
-    # --- 入力エリア（連続バグ解消版） ---
     st.markdown("<div class='ios-card'>", unsafe_allow_html=True)
     st.markdown("##### 🔄 現在の資産を更新")
     col_input1, col_input2 = st.columns(2)
-    with col_input1:
-        st.number_input("💰 現金・預金（万円）", value=float(st.session_state.actual_cash), key="input_cash", step=10.0)
-    with col_input2:
-        st.number_input("📈 NISA残高（万円）", value=float(st.session_state.actual_nisa), key="input_nisa", step=10.0)
-    
-    # on_clickを使うことで、ボタン連打しても状態が正常に確定される
+    with col_input1: st.number_input("💰 現金・預金（万円）", value=float(st.session_state.actual_cash), key="input_cash", step=10.0)
+    with col_input2: st.number_input("📈 NISA残高（万円）", value=float(st.session_state.actual_nisa), key="input_nisa", step=10.0)
     st.button("クラウドに保存して再計算", on_click=save_home_assets, type="primary", use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # --- 具体的なFPアドバイスエリア ---
     diff_total = actual_total - target_total
-    TOLERANCE = 50
     
-    if diff_total < -TOLERANCE:
+    if diff_total < -TOLERANCE_MAN:
         st.error(f"⚠️ 予定を {abs(int(diff_total)):,} 万円 下回っています。")
-        with st.expander("💡 ファイナンシャルプランナーからの改善提案", expanded=True):
-            st.markdown("##### 👩‍💼 資産リカバリーのための具体的なアドバイス")
-            
-            # ① 食費の比較と見直し
-            st.markdown("**① 支出の見直しと最適化**")
-            st.markdown(f"現在、食費・日用品が月額 **{st.session_state.exp_food}万円** となっています。一般的な5人家族の平均食費は約9万円前後です。育ち盛りのお子様がいることを考慮しても、まとめ買いや外食費のルール化などでここを少し工夫できれば、月2〜3万円（年間30万円以上）のリカバリーが十分可能です。また、使途不明金（バッファ）が月 **{st.session_state.exp_free}万円** ありますので、ここから補填することで無理なく立て直しができます。")
-            
-            # ② 投資増額の提案
-            st.markdown("**② 現金比率と投資（NISA）の増額**")
-            if st.session_state.actual_cash > 1500:
-                st.markdown(f"現在、現金残高が **{st.session_state.actual_cash}万円** と生活防衛資金として十分すぎるほど潤沢にあります。マイナスを早く埋めるためには、貯金だけでなく複利の力を活用するのが最適です。現在のNISA積立額（年{st.session_state.invest_amount}万円）を、例えば **年間120万円（月10万円）に増額** し、現金を投資へシフトしていくことを強く推奨します。")
+        
+        # 🤖 AIアドバイス生成ボタン
+        if st.button("✨ 専属AI-FPにアドバイスを求める", type="primary"):
+            if "GEMINI_API_KEY" not in st.secrets:
+                st.error("Secretsに GEMINI_API_KEY が設定されていません！")
             else:
-                st.markdown(f"使途不明金から月数万円を捻出し、現在のNISA積立額（年{st.session_state.invest_amount}万円）をさらに増額することで、投資の複利効果で遅れを取り戻しましょう。")
-            
-            # ③ 翌年以降の高額支出アラート
-            st.markdown("**③ 【重要】今後の高額スポット支出アラート**")
-            alerts = []
-            # 44歳(現在翌年以降)で100万以上の支出を検索
-            for age, data in future_data.items():
-                if data['extra'] >= 100:
-                    alerts.append(f"- **{age}歳の年** に特別支出 **約{data['extra']}万円**")
-            
-            if alerts:
-                st.markdown("数年以内に以下の大きな支出が控えています。")
-                for alert in alerts:
-                    st.markdown(alert)
-                st.markdown("この高額支出の波が来たときにNISAを取り崩さずに済むよう、現金のプールは確実にキープしておいてください。")
-            else:
-                st.markdown("直近数年で予定されている極端な高額支出はありません。")
+                with st.spinner("最新の政策・経済ニュースと家計データを分析しています..."):
+                    try:
+                        expenses_data = {
+                            'food': st.session_state.exp_food, 'util': st.session_state.exp_util,
+                            'tele': st.session_state.exp_tele, 'car': st.session_state.exp_car,
+                            'edu': st.session_state.exp_edu, 'wife': st.session_state.exp_wife,
+                            'free': st.session_state.exp_free, 'invest': st.session_state.invest_amount
+                        }
+                        ai_advice = generate_ai_fp_advice(
+                            st.session_state.actual_cash, st.session_state.actual_nisa, 
+                            diff_total, int(new_total_inc), expenses_data
+                        )
+                        st.success("分析が完了しました！")
+                        st.markdown("<div class='ios-card' style='background-color:#F8FAFC; border-left:4px solid #3498db;'>", unsafe_allow_html=True)
+                        st.markdown(ai_advice)
+                        st.markdown("</div>", unsafe_allow_html=True)
+                    except Exception as e:
+                        st.error(f"AIの呼び出しに失敗しました。エラー詳細: {e}")
+                    
+        # 今後の高額スポット支出アラート（固定表示）
+        alerts = [f"- **{age}歳の年** に特別支出 **約{data['extra']}万円**" for age, data in future_data.items() if data['extra'] >= 100]
+        if alerts:
+            st.warning("⚠️ **【重要】数年以内の高額支出アラート**\n" + "\n".join(alerts))
+
 
 with tab2:
     st.markdown("<div class='ios-card'>", unsafe_allow_html=True)
@@ -346,16 +330,14 @@ with tab2:
     st.caption(f"現在のベース：世帯年収 {int(new_total_inc)}万円 ／ 生活費 {int(living_cost_annual)}万円(年) ／ NISA積立 {int(st.session_state.invest_amount)}万円(年)")
     
     with st.expander("📝 収入・支出を細かく編集する", expanded=False):
-        st.markdown("#### 👩‍💼 【収入】（手取り / 万円）")
         c1, c2 = st.columns(2)
         with c1:
             st.number_input("夫 月収", value=float(st.session_state.inc_husband_m), key="input_inc_h_m", step=1.0)
-            st.number_input("夫 ボーナス(年)", value=float(st.session_state.inc_husband_b), key="input_inc_h_b", step=5.0)
+            st.number_input("夫 ボーナス", value=float(st.session_state.inc_husband_b), key="input_inc_h_b", step=5.0)
         with c2:
             st.number_input("妻 月収", value=float(st.session_state.inc_wife_m), key="input_inc_w_m", step=1.0)
-            st.number_input("妻 ボーナス(年)", value=float(st.session_state.inc_wife_b), key="input_inc_w_b", step=5.0)
+            st.number_input("妻 ボーナス", value=float(st.session_state.inc_wife_b), key="input_inc_w_b", step=5.0)
             
-        st.markdown("#### 🛒 【支出】（月額 / 万円）")
         c3, c4 = st.columns(2)
         with c3:
             st.number_input("食費・日用品", value=float(st.session_state.exp_food), key="input_exp_food", step=1.0)
@@ -363,14 +345,12 @@ with tab2:
             st.number_input("通信費", value=float(st.session_state.exp_tele), key="input_exp_tele", step=0.1)
             st.number_input("車関連(保険・積立)", value=float(st.session_state.exp_car), key="input_exp_car", step=1.0)
         with c4:
-            st.number_input("教育費(塾・学童等)", value=float(st.session_state.exp_edu), key="input_exp_edu", step=1.0)
+            st.number_input("教育費(塾・学童)", value=float(st.session_state.exp_edu), key="input_exp_edu", step=1.0)
             st.number_input("保険料", value=float(st.session_state.exp_ins), key="input_exp_ins", step=0.1)
             st.number_input("妻お小遣い", value=float(st.session_state.exp_wife), key="input_exp_wife", step=0.1)
             st.number_input("使途不明金", value=float(st.session_state.exp_free), key="input_exp_free", step=1.0)
             
-        st.markdown("#### 📈 【投資】（年間 / 万円）")
         st.number_input("NISA年間積立額", value=float(st.session_state.invest_amount), key="input_invest", step=5.0)
-
         st.button("設定を保存して再計算", on_click=save_plan_settings, type="primary", use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 

@@ -95,7 +95,7 @@ def generate_ai_fp_advice(actual_cash, actual_nisa, diff_total, inc_total, expen
     4. 🔥 **総括エール**：最後にクライアントを励ます言葉を添えてください。
     """
     
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
     response = model.generate_content(prompt)
     return response.text
 
